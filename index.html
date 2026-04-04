@@ -20,9 +20,6 @@
         #globe-container:active {
             cursor: grabbing;
         }
-        #globe-container.clicked {
-            cursor: crosshair;
-        }
         #loading {
             position: absolute;
             top: 50%;
@@ -83,11 +80,71 @@
             color: #888;
             font-style: italic;
         }
+        /* Search input styles */
+        #search-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+        }
+        #search-input {
+            background: rgba(0,0,0,0.7);
+            border: 1px solid #4fc3f7;
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            width: 200px;
+            outline: none;
+        }
+        #search-input::placeholder {
+            color: #888;
+        }
+        #search-input:focus {
+            border-color: #6fd4ff;
+            box-shadow: 0 0 10px rgba(79, 195, 247, 0.3);
+        }
+        #search-btn {
+            background: rgba(79, 195, 247, 0.2);
+            border: 1px solid #4fc3f7;
+            color: #4fc3f7;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        #search-btn:hover {
+            background: rgba(79, 195, 247, 0.4);
+        }
+        #search-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #search-help {
+            position: absolute;
+            top: 65px;
+            left: 20px;
+            color: #888;
+            font-size: 11px;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-radius: 3px;
+        }
     </style>
 </head>
 <body>
     <div id="globe-container">
         <div id="loading">LOADING EARTH...</div>
+        
+        <div id="search-container">
+            <input type="text" id="search-input" placeholder="Lat, Lon (e.g. 1.35, 103.82)">
+            <button id="search-btn">Go</button>
+        </div>
+        <div id="search-help">Format: latitude, longitude (e.g. 1.35, 103.82)</div>
+        
         <div id="info">Click to select • Drag to rotate</div>
         <div id="selection"></div>
     </div>
@@ -101,8 +158,9 @@
         let isDragging = false;
         let mouseDownTime = 0;
         let mouseDownPos = { x: 0, y: 0 };
+        let targetRotation = null;
+        let isAnimatingToLocation = false;
 
-        // Major regions for fallback
         const REGIONS = [
             { name: "North America", minLat: 15, maxLat: 75, minLon: -170, maxLon: -50 },
             { name: "South America", minLat: -55, maxLat: 15, minLon: -85, maxLon: -35 },
@@ -149,15 +207,14 @@
             raycaster = new THREE.Raycaster();
             mouse = new THREE.Vector2();
 
-            // Controls with graceful auto-rotation
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
-            controls.dampingFactor = 0.03; // Smoother damping
+            controls.dampingFactor = 0.03;
             controls.minDistance = 1.5;
             controls.maxDistance = 10;
             controls.enablePan = false;
             controls.autoRotate = true;
-            controls.autoRotateSpeed = 0.3; // Slower rotation
+            controls.autoRotateSpeed = 0.3;
 
             createStars();
             createEarth();
@@ -170,13 +227,92 @@
             // Event listeners
             window.addEventListener('resize', onWindowResize, false);
             
-            // Mouse events for click vs drag detection
             const container = document.getElementById('globe-container');
             container.addEventListener('mousedown', onMouseDown, false);
             container.addEventListener('mousemove', onMouseMove, false);
             container.addEventListener('mouseup', onMouseUp, false);
             
+            // Search functionality
+            document.getElementById('search-btn').addEventListener('click', handleSearch);
+            document.getElementById('search-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') handleSearch();
+            });
+            
             animate();
+        }
+
+        function handleSearch() {
+            const input = document.getElementById('search-input').value.trim();
+            if (!input) return;
+            
+            // Parse coordinates
+            const coords = parseCoordinates(input);
+            if (!coords) {
+                alert('Invalid format. Use: latitude, longitude (e.g. 1.35, 103.82)');
+                return;
+            }
+            
+            const { lat, lon } = coords;
+            
+            // Validate range
+            if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+                alert('Coordinates out of range. Latitude: -90 to 90, Longitude: -180 to 180');
+                return;
+            }
+            
+            // Rotate globe to location
+            rotateToLocation(lat, lon);
+        }
+
+        function parseCoordinates(input) {
+            // Try various formats
+            // Format: "1.35, 103.82" or "1.35 103.82" or "1.35,103.82"
+            const cleaned = input.replace(/[^0-9.\s,-]/g, '');
+            const parts = cleaned.split(/[,\s]+/).filter(p => p.length > 0);
+            
+            if (parts.length >= 2) {
+                const lat = parseFloat(parts[0]);
+                const lon = parseFloat(parts[1]);
+                
+                if (!isNaN(lat) && !isNaN(lon)) {
+                    return { lat, lon };
+                }
+            }
+            
+            return null;
+        }
+
+        function rotateToLocation(lat, lon) {
+            // Stop auto-rotation
+            controls.autoRotate = false;
+            isAnimatingToLocation = true;
+            
+            // Calculate target rotation
+            // Convert lat/lon to radians
+            const phi = (90 - lat) * (Math.PI / 180);
+            const theta = (lon + 180) * (Math.PI / 180);
+            
+            // Calculate target camera position
+            const radius = camera.position.length();
+            const targetX = radius * Math.sin(phi) * Math.cos(theta);
+            const targetY = radius * Math.cos(phi);
+            const targetZ = radius * Math.sin(phi) * Math.sin(theta);
+            
+            targetRotation = {
+                x: targetX,
+                y: targetY,
+                z: targetZ,
+                lat: lat,
+                lon: lon
+            };
+            
+            // Show loading
+            const selectionDiv = document.getElementById('selection');
+            selectionDiv.innerHTML = `
+                <div class="loading">Moving to location...</div>
+                <div class="coords">Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°</div>
+            `;
+            selectionDiv.classList.add('visible');
         }
 
         function createStars() {
@@ -282,16 +418,18 @@
         }
 
         function onMouseDown(event) {
+            // Ignore if clicking on search UI
+            if (event.target.closest('#search-container') || event.target.closest('#search-help')) {
+                return;
+            }
+            
             isDragging = false;
             mouseDownTime = Date.now();
             mouseDownPos = { x: event.clientX, y: event.clientY };
-            
-            // Stop auto-rotation on mouse down
             controls.autoRotate = false;
         }
 
         function onMouseMove(event) {
-            // Detect if user is dragging
             const dx = event.clientX - mouseDownPos.x;
             const dy = event.clientY - mouseDownPos.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
@@ -302,17 +440,21 @@
         }
 
         async function onMouseUp(event) {
+            // Ignore if clicking on search UI
+            if (event.target.closest('#search-container') || event.target.closest('#search-help')) {
+                return;
+            }
+            
             const clickDuration = Date.now() - mouseDownTime;
             
-            // Only process as click if it was a short duration and minimal movement
             if (!isDragging && clickDuration < 300) {
-                // This was a click, not a drag
                 await handleGlobeClick(event);
             }
             
-            // Resume auto-rotation after a delay
             setTimeout(() => {
-                controls.autoRotate = true;
+                if (!isAnimatingToLocation) {
+                    controls.autoRotate = true;
+                }
             }, 2000);
         }
 
@@ -328,7 +470,6 @@
                 const point = intersects[0].point;
                 const uv = intersects[0].uv;
                 
-                // More accurate coordinate calculation
                 const lat = (0.5 - uv.y) * 180;
                 const lon = (uv.x - 0.5) * 360;
                 
@@ -341,7 +482,6 @@
                 `;
                 selectionDiv.classList.add('visible');
                 
-                // Get location info
                 const location = await getLocationInfo(lat, lon);
                 const regionName = getRegionName(lat, lon);
                 
@@ -428,7 +568,61 @@
         function animate() {
             requestAnimationFrame(animate);
             
-            if (earth) earth.rotation.y += 0.0003; // Slower rotation
+            // Smooth animation to target location
+            if (targetRotation && isAnimatingToLocation) {
+                const currentPos = camera.position.clone();
+                const targetPos = new THREE.Vector3(targetRotation.x, targetRotation.y, targetRotation.z);
+                
+                // Smooth interpolation
+                currentPos.lerp(targetPos, 0.05);
+                camera.position.copy(currentPos);
+                camera.lookAt(0, 0, 0);
+                
+                // Check if we're close enough
+                if (currentPos.distanceTo(targetPos) < 0.1) {
+                    isAnimatingToLocation = false;
+                    targetRotation = null;
+                    
+                    // Create marker at the location
+                    const phi = (90 - targetRotation.lat) * (Math.PI / 180);
+                    const theta = (targetRotation.lon + 180) * (Math.PI / 180);
+                    const markerX = Math.sin(phi) * Math.cos(theta);
+                    const markerY = Math.cos(phi);
+                    const markerZ = Math.sin(phi) * Math.sin(theta);
+                    
+                    createSelectionMarker(new THREE.Vector3(markerX, markerY, markerZ));
+                    
+                    // Update selection display
+                    const selectionDiv = document.getElementById('selection');
+                    getLocationInfo(targetRotation.lat, targetRotation.lon).then(location => {
+                        const regionName = getRegionName(targetRotation.lat, targetRotation.lon);
+                        
+                        if (location) {
+                            let locationParts = [];
+                            if (location.city) locationParts.push(location.city);
+                            else if (location.state) locationParts.push(location.state);
+                            if (location.country && !locationParts.includes(location.country)) {
+                                locationParts.push(location.country);
+                            }
+                            
+                            let mainLocation = locationParts.join(', ');
+                            if (!mainLocation) mainLocation = regionName;
+                            
+                            selectionDiv.innerHTML = `
+                                <div class="location">${mainLocation}</div>
+                                <div class="coords">Lat: ${targetRotation.lat.toFixed(4)}°, Lon: ${targetRotation.lon.toFixed(4)}°</div>
+                            `;
+                        } else {
+                            selectionDiv.innerHTML = `
+                                <div class="location">${regionName}</div>
+                                <div class="coords">Lat: ${targetRotation.lat.toFixed(4)}°, Lon: ${targetRotation.lon.toFixed(4)}°</div>
+                            `;
+                        }
+                    });
+                }
+            }
+            
+            if (earth && !isAnimatingToLocation) earth.rotation.y += 0.0003;
             if (stars) stars.rotation.y += 0.00005;
             
             if (selectionMarker) {
