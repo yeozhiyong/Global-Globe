@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Globe - Interactive</title>
+    <title>Global Globe - NASA Edition</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -15,10 +15,6 @@
             width: 100vw; 
             height: 100vh;
             position: relative;
-            cursor: grab;
-        }
-        #globe-container:active {
-            cursor: grabbing;
         }
         #loading {
             position: absolute;
@@ -32,162 +28,17 @@
             pointer-events: none;
             transition: opacity 0.5s;
         }
-        #info {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            color: #fff;
-            font-size: 12px;
-            opacity: 0.6;
-            pointer-events: none;
-        }
-        #selection {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            color: #4fc3f7;
-            font-size: 13px;
-            opacity: 0;
-            transition: opacity 0.3s;
-            background: rgba(0,0,0,0.8);
-            padding: 15px 20px;
-            border-radius: 8px;
-            border: 1px solid #4fc3f7;
-            pointer-events: none;
-            min-width: 220px;
-            max-width: 300px;
-        }
-        #selection.visible {
-            opacity: 1;
-        }
-        #selection .location {
-            color: #fff;
-            font-size: 16px;
-            font-weight: bold;
-            margin-bottom: 5px;
-            line-height: 1.3;
-        }
-        #selection .region {
-            color: #aaa;
-            font-size: 12px;
-            margin-bottom: 3px;
-        }
-        #selection .coords {
-            color: #888;
-            font-size: 11px;
-        }
-        #selection .loading {
-            color: #888;
-            font-style: italic;
-        }
-        /* Search input styles */
-        #search-container {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            display: flex;
-            gap: 10px;
-            z-index: 100;
-        }
-        #search-input {
-            background: rgba(0,0,0,0.7);
-            border: 1px solid #4fc3f7;
-            color: #fff;
-            padding: 10px 15px;
-            border-radius: 5px;
-            font-size: 14px;
-            width: 200px;
-            outline: none;
-        }
-        #search-input::placeholder {
-            color: #888;
-        }
-        #search-input:focus {
-            border-color: #6fd4ff;
-            box-shadow: 0 0 10px rgba(79, 195, 247, 0.3);
-        }
-        #search-btn {
-            background: rgba(79, 195, 247, 0.2);
-            border: 1px solid #4fc3f7;
-            color: #4fc3f7;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.3s;
-        }
-        #search-btn:hover {
-            background: rgba(79, 195, 247, 0.4);
-        }
-        #search-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        #search-help {
-            position: absolute;
-            top: 65px;
-            left: 20px;
-            color: #888;
-            font-size: 11px;
-            background: rgba(0,0,0,0.7);
-            padding: 5px 10px;
-            border-radius: 3px;
-        }
     </style>
 </head>
 <body>
     <div id="globe-container">
         <div id="loading">LOADING EARTH...</div>
-        
-        <div id="search-container">
-            <input type="text" id="search-input" placeholder="Lat, Lon (e.g. 1.35, 103.82)">
-            <button id="search-btn">Go</button>
-        </div>
-        <div id="search-help">Format: latitude, longitude (e.g. 1.35, 103.82)</div>
-        
-        <div id="info">Click to select • Drag to rotate</div>
-        <div id="selection"></div>
     </div>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script>
-        let scene, camera, renderer, earth, atmosphere, stars, controls;
-        let raycaster, mouse;
-        let selectionMarker = null;
-        let isDragging = false;
-        let mouseDownTime = 0;
-        let mouseDownPos = { x: 0, y: 0 };
-        let targetRotation = null;
-        let isAnimatingToLocation = false;
-
-        const REGIONS = [
-            { name: "North America", minLat: 15, maxLat: 75, minLon: -170, maxLon: -50 },
-            { name: "South America", minLat: -55, maxLat: 15, minLon: -85, maxLon: -35 },
-            { name: "Europe", minLat: 35, maxLat: 70, minLon: -25, maxLon: 45 },
-            { name: "Africa", minLat: -35, maxLat: 35, minLon: -20, maxLon: 55 },
-            { name: "Asia", minLat: 10, maxLat: 75, minLon: 55, maxLon: 180 },
-            { name: "Australia", minLat: -45, maxLat: -10, minLon: 110, maxLon: 155 },
-            { name: "Oceania", minLat: -50, maxLat: 0, minLon: 110, maxLon: 180 },
-            { name: "Antarctica", minLat: -90, maxLat: -60, minLon: -180, maxLon: 180 },
-            { name: "Arctic Ocean", minLat: 70, maxLat: 90, minLon: -180, maxLon: 180 },
-            { name: "North Pacific", minLat: 0, maxLat: 60, minLon: 120, maxLon: 180 },
-            { name: "South Pacific", minLat: -60, maxLat: 0, minLon: 120, maxLon: 180 },
-            { name: "North Atlantic", minLat: 0, maxLat: 70, minLon: -80, maxLon: 20 },
-            { name: "South Atlantic", minLat: -60, maxLat: 0, minLon: -80, maxLon: 20 },
-            { name: "Indian Ocean", minLat: -60, maxLat: 30, minLon: 20, maxLon: 150 },
-            { name: "Southern Ocean", minLat: -60, maxLat: -45, minLon: -180, maxLon: 180 }
-        ];
-
-        function getRegionName(lat, lon) {
-            for (const region of REGIONS) {
-                if (lat >= region.minLat && lat <= region.maxLat &&
-                    lon >= region.minLon && lon <= region.maxLon) {
-                    return region.name;
-                }
-            }
-            return "Open Ocean";
-        }
+        let scene, camera, renderer, earth, clouds, atmosphere, stars, controls;
 
         function init() {
             scene = new THREE.Scene();
@@ -204,9 +55,6 @@
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             document.getElementById('globe-container').appendChild(renderer.domElement);
 
-            raycaster = new THREE.Raycaster();
-            mouse = new THREE.Vector2();
-
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.03;
@@ -218,101 +66,15 @@
 
             createStars();
             createEarth();
+            createClouds();
             createAtmosphere();
 
             setTimeout(() => {
                 document.getElementById('loading').style.opacity = '0';
             }, 1000);
 
-            // Event listeners
             window.addEventListener('resize', onWindowResize, false);
-            
-            const container = document.getElementById('globe-container');
-            container.addEventListener('mousedown', onMouseDown, false);
-            container.addEventListener('mousemove', onMouseMove, false);
-            container.addEventListener('mouseup', onMouseUp, false);
-            
-            // Search functionality
-            document.getElementById('search-btn').addEventListener('click', handleSearch);
-            document.getElementById('search-input').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') handleSearch();
-            });
-            
             animate();
-        }
-
-        function handleSearch() {
-            const input = document.getElementById('search-input').value.trim();
-            if (!input) return;
-            
-            // Parse coordinates
-            const coords = parseCoordinates(input);
-            if (!coords) {
-                alert('Invalid format. Use: latitude, longitude (e.g. 1.35, 103.82)');
-                return;
-            }
-            
-            const { lat, lon } = coords;
-            
-            // Validate range
-            if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-                alert('Coordinates out of range. Latitude: -90 to 90, Longitude: -180 to 180');
-                return;
-            }
-            
-            // Rotate globe to location
-            rotateToLocation(lat, lon);
-        }
-
-        function parseCoordinates(input) {
-            // Try various formats
-            // Format: "1.35, 103.82" or "1.35 103.82" or "1.35,103.82"
-            const cleaned = input.replace(/[^0-9.\s,-]/g, '');
-            const parts = cleaned.split(/[,\s]+/).filter(p => p.length > 0);
-            
-            if (parts.length >= 2) {
-                const lat = parseFloat(parts[0]);
-                const lon = parseFloat(parts[1]);
-                
-                if (!isNaN(lat) && !isNaN(lon)) {
-                    return { lat, lon };
-                }
-            }
-            
-            return null;
-        }
-
-        function rotateToLocation(lat, lon) {
-            // Stop auto-rotation
-            controls.autoRotate = false;
-            isAnimatingToLocation = true;
-            
-            // Calculate target rotation
-            // Convert lat/lon to radians
-            const phi = (90 - lat) * (Math.PI / 180);
-            const theta = (lon + 180) * (Math.PI / 180);
-            
-            // Calculate target camera position
-            const radius = camera.position.length();
-            const targetX = radius * Math.sin(phi) * Math.cos(theta);
-            const targetY = radius * Math.cos(phi);
-            const targetZ = radius * Math.sin(phi) * Math.sin(theta);
-            
-            targetRotation = {
-                x: targetX,
-                y: targetY,
-                z: targetZ,
-                lat: lat,
-                lon: lon
-            };
-            
-            // Show loading
-            const selectionDiv = document.getElementById('selection');
-            selectionDiv.innerHTML = `
-                <div class="loading">Moving to location...</div>
-                <div class="coords">Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°</div>
-            `;
-            selectionDiv.classList.add('visible');
         }
 
         function createStars() {
@@ -347,8 +109,20 @@
             const geometry = new THREE.SphereGeometry(1, 128, 128);
             const textureLoader = new THREE.TextureLoader();
             
+            // Using Solar System Scope 8K Earth texture (higher quality)
             const earthTexture = textureLoader.load(
-                'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_atmos_2048.jpg'
+                'https://www.solarsystemscope.com/textures/download/8k_earth_daymap.jpg',
+                function(texture) {
+                    console.log('Earth texture loaded');
+                },
+                undefined,
+                function(err) {
+                    // Fallback to NASA texture
+                    console.log('Loading fallback texture');
+                    earth.material.map = textureLoader.load(
+                        'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_atmos_2048.jpg'
+                    );
+                }
             );
 
             const material = new THREE.MeshBasicMaterial({
@@ -357,6 +131,39 @@
 
             earth = new THREE.Mesh(geometry, material);
             scene.add(earth);
+        }
+
+        function createClouds() {
+            const geometry = new THREE.SphereGeometry(1.01, 128, 128);
+            const textureLoader = new THREE.TextureLoader();
+            
+            // Solar System Scope 8K cloud texture
+            const cloudTexture = textureLoader.load(
+                'https://www.solarsystemscope.com/textures/download/8k_earth_clouds.jpg',
+                function(texture) {
+                    console.log('Cloud texture loaded');
+                },
+                undefined,
+                function(err) {
+                    // Fallback to NASA cloud texture
+                    console.log('Loading fallback cloud texture');
+                    clouds.material.map = textureLoader.load(
+                        'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_1024.png'
+                    );
+                }
+            );
+            
+            const material = new THREE.MeshBasicMaterial({
+                map: cloudTexture,
+                transparent: true,
+                opacity: 0.4,
+                blending: THREE.AdditiveBlending,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+
+            clouds = new THREE.Mesh(geometry, material);
+            scene.add(clouds);
         }
 
         function createAtmosphere() {
@@ -386,179 +193,6 @@
             scene.add(atmosphere);
         }
 
-        function createSelectionMarker(position) {
-            if (selectionMarker) {
-                scene.remove(selectionMarker);
-            }
-            
-            selectionMarker = new THREE.Group();
-            
-            const dotGeometry = new THREE.SphereGeometry(0.02, 16, 16);
-            const dotMaterial = new THREE.MeshBasicMaterial({
-                color: 0x00ff00,
-                transparent: true,
-                opacity: 0.9
-            });
-            const dot = new THREE.Mesh(dotGeometry, dotMaterial);
-            selectionMarker.add(dot);
-            
-            const ringGeometry = new THREE.RingGeometry(0.03, 0.04, 32);
-            const ringMaterial = new THREE.MeshBasicMaterial({
-                color: 0x00ff00,
-                transparent: true,
-                opacity: 0.6,
-                side: THREE.DoubleSide
-            });
-            const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-            ring.lookAt(camera.position);
-            selectionMarker.add(ring);
-            
-            selectionMarker.position.copy(position);
-            scene.add(selectionMarker);
-        }
-
-        function onMouseDown(event) {
-            // Ignore if clicking on search UI
-            if (event.target.closest('#search-container') || event.target.closest('#search-help')) {
-                return;
-            }
-            
-            isDragging = false;
-            mouseDownTime = Date.now();
-            mouseDownPos = { x: event.clientX, y: event.clientY };
-            controls.autoRotate = false;
-        }
-
-        function onMouseMove(event) {
-            const dx = event.clientX - mouseDownPos.x;
-            const dy = event.clientY - mouseDownPos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            if (distance > 5) {
-                isDragging = true;
-            }
-        }
-
-        async function onMouseUp(event) {
-            // Ignore if clicking on search UI
-            if (event.target.closest('#search-container') || event.target.closest('#search-help')) {
-                return;
-            }
-            
-            const clickDuration = Date.now() - mouseDownTime;
-            
-            if (!isDragging && clickDuration < 300) {
-                await handleGlobeClick(event);
-            }
-            
-            setTimeout(() => {
-                if (!isAnimatingToLocation) {
-                    controls.autoRotate = true;
-                }
-            }, 2000);
-        }
-
-        async function handleGlobeClick(event) {
-            const rect = renderer.domElement.getBoundingClientRect();
-            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-            raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObject(earth);
-
-            if (intersects.length > 0) {
-                const point = intersects[0].point;
-                const uv = intersects[0].uv;
-                
-                const lat = (0.5 - uv.y) * 180;
-                const lon = (uv.x - 0.5) * 360;
-                
-                createSelectionMarker(point);
-                
-                const selectionDiv = document.getElementById('selection');
-                selectionDiv.innerHTML = `
-                    <div class="loading">Looking up location...</div>
-                    <div class="coords">Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°</div>
-                `;
-                selectionDiv.classList.add('visible');
-                
-                const location = await getLocationInfo(lat, lon);
-                const regionName = getRegionName(lat, lon);
-                
-                if (location) {
-                    let locationParts = [];
-                    
-                    if (location.city) locationParts.push(location.city);
-                    else if (location.state) locationParts.push(location.state);
-                    
-                    if (location.country && !locationParts.includes(location.country)) {
-                        locationParts.push(location.country);
-                    }
-                    
-                    let mainLocation = locationParts.join(', ');
-                    let subLocation = '';
-                    
-                    if (!mainLocation) {
-                        if (location.ocean) {
-                            mainLocation = location.ocean;
-                            subLocation = 'Ocean';
-                        } else if (location.sea) {
-                            mainLocation = location.sea;
-                            subLocation = 'Sea';
-                        } else {
-                            mainLocation = regionName;
-                            subLocation = 'Region';
-                        }
-                    }
-                    
-                    selectionDiv.innerHTML = `
-                        <div class="location">${mainLocation || regionName}</div>
-                        ${subLocation ? `<div class="region">${subLocation}</div>` : ''}
-                        <div class="coords">Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°</div>
-                    `;
-                } else {
-                    selectionDiv.innerHTML = `
-                        <div class="location">${regionName}</div>
-                        <div class="region">Region</div>
-                        <div class="coords">Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°</div>
-                    `;
-                }
-            }
-        }
-
-        async function getLocationInfo(lat, lon) {
-            try {
-                await new Promise(resolve => setTimeout(resolve, 100));
-                
-                const response = await fetch(
-                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10&accept-language=en`,
-                    {
-                        headers: {
-                            'User-Agent': 'GlobalGlobe/1.0'
-                        }
-                    }
-                );
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                
-                return { 
-                    city: data.address?.city || data.address?.town || data.address?.village || data.address?.hamlet || data.address?.suburb || '',
-                    state: data.address?.state || data.address?.region || data.address?.province || '',
-                    country: data.address?.country || data.address?.country_name || '',
-                    ocean: data.address?.ocean || '',
-                    sea: data.address?.sea || '',
-                    display_name: data.display_name
-                };
-            } catch (error) {
-                console.error('Geocoding error:', error);
-                return null;
-            }
-        }
-
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
@@ -568,66 +202,9 @@
         function animate() {
             requestAnimationFrame(animate);
             
-            // Smooth animation to target location
-            if (targetRotation && isAnimatingToLocation) {
-                const currentPos = camera.position.clone();
-                const targetPos = new THREE.Vector3(targetRotation.x, targetRotation.y, targetRotation.z);
-                
-                // Smooth interpolation
-                currentPos.lerp(targetPos, 0.05);
-                camera.position.copy(currentPos);
-                camera.lookAt(0, 0, 0);
-                
-                // Check if we're close enough
-                if (currentPos.distanceTo(targetPos) < 0.1) {
-                    isAnimatingToLocation = false;
-                    targetRotation = null;
-                    
-                    // Create marker at the location
-                    const phi = (90 - targetRotation.lat) * (Math.PI / 180);
-                    const theta = (targetRotation.lon + 180) * (Math.PI / 180);
-                    const markerX = Math.sin(phi) * Math.cos(theta);
-                    const markerY = Math.cos(phi);
-                    const markerZ = Math.sin(phi) * Math.sin(theta);
-                    
-                    createSelectionMarker(new THREE.Vector3(markerX, markerY, markerZ));
-                    
-                    // Update selection display
-                    const selectionDiv = document.getElementById('selection');
-                    getLocationInfo(targetRotation.lat, targetRotation.lon).then(location => {
-                        const regionName = getRegionName(targetRotation.lat, targetRotation.lon);
-                        
-                        if (location) {
-                            let locationParts = [];
-                            if (location.city) locationParts.push(location.city);
-                            else if (location.state) locationParts.push(location.state);
-                            if (location.country && !locationParts.includes(location.country)) {
-                                locationParts.push(location.country);
-                            }
-                            
-                            let mainLocation = locationParts.join(', ');
-                            if (!mainLocation) mainLocation = regionName;
-                            
-                            selectionDiv.innerHTML = `
-                                <div class="location">${mainLocation}</div>
-                                <div class="coords">Lat: ${targetRotation.lat.toFixed(4)}°, Lon: ${targetRotation.lon.toFixed(4)}°</div>
-                            `;
-                        } else {
-                            selectionDiv.innerHTML = `
-                                <div class="location">${regionName}</div>
-                                <div class="coords">Lat: ${targetRotation.lat.toFixed(4)}°, Lon: ${targetRotation.lon.toFixed(4)}°</div>
-                            `;
-                        }
-                    });
-                }
-            }
-            
-            if (earth && !isAnimatingToLocation) earth.rotation.y += 0.0003;
+            if (earth) earth.rotation.y += 0.0003;
+            if (clouds) clouds.rotation.y += 0.0005;
             if (stars) stars.rotation.y += 0.00005;
-            
-            if (selectionMarker) {
-                selectionMarker.children[1].lookAt(camera.position);
-            }
             
             controls.update();
             renderer.render(scene, camera);
