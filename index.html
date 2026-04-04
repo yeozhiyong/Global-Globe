@@ -43,17 +43,32 @@
             top: 20px;
             right: 20px;
             color: #4fc3f7;
-            font-size: 14px;
+            font-size: 13px;
             opacity: 0;
             transition: opacity 0.3s;
-            background: rgba(0,0,0,0.7);
-            padding: 10px 15px;
-            border-radius: 5px;
+            background: rgba(0,0,0,0.8);
+            padding: 15px 20px;
+            border-radius: 8px;
             border: 1px solid #4fc3f7;
             pointer-events: none;
+            min-width: 200px;
         }
         #selection.visible {
             opacity: 1;
+        }
+        #selection .location {
+            color: #fff;
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        #selection .coords {
+            color: #aaa;
+            font-size: 11px;
+        }
+        #selection .loading {
+            color: #888;
+            font-style: italic;
         }
     </style>
 </head>
@@ -149,7 +164,6 @@
                 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_atmos_2048.jpg'
             );
 
-            // Use BasicMaterial with emissive to show full globe
             const material = new THREE.MeshBasicMaterial({
                 map: earthTexture
             });
@@ -213,7 +227,6 @@
             
             selectionMarker = new THREE.Group();
             
-            // Inner dot
             const dotGeometry = new THREE.SphereGeometry(0.02, 16, 16);
             const dotMaterial = new THREE.MeshBasicMaterial({
                 color: 0x00ff00,
@@ -223,7 +236,6 @@
             const dot = new THREE.Mesh(dotGeometry, dotMaterial);
             selectionMarker.add(dot);
             
-            // Outer ring
             const ringGeometry = new THREE.RingGeometry(0.03, 0.04, 32);
             const ringMaterial = new THREE.MeshBasicMaterial({
                 color: 0x00ff00,
@@ -239,7 +251,26 @@
             scene.add(selectionMarker);
         }
 
-        function onGlobeClick(event) {
+        async function getLocationInfo(lat, lon) {
+            try {
+                // Using OpenStreetMap Nominatim API (free, no key required)
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10&accept-language=en`
+                );
+                const data = await response.json();
+                
+                const city = data.address.city || data.address.town || data.address.village || '';
+                const country = data.address.country || '';
+                const state = data.address.state || '';
+                
+                return { city, state, country, display_name: data.display_name };
+            } catch (error) {
+                console.error('Geocoding error:', error);
+                return null;
+            }
+        }
+
+        async function onGlobeClick(event) {
             event.preventDefault();
             
             const rect = renderer.domElement.getBoundingClientRect();
@@ -260,16 +291,34 @@
                 
                 const selectionDiv = document.getElementById('selection');
                 selectionDiv.innerHTML = `
-                    <strong>Selected</strong><br>
-                    Lat: ${lat.toFixed(2)}°<br>
-                    Lon: ${lon.toFixed(2)}°
+                    <div class="loading">Looking up location...</div>
+                    <div class="coords">Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°</div>
                 `;
                 selectionDiv.classList.add('visible');
+                
+                // Get location info
+                const location = await getLocationInfo(lat, lon);
+                
+                if (location && (location.city || location.country)) {
+                    const locationText = location.city && location.country 
+                        ? `${location.city}, ${location.country}`
+                        : location.country || location.state || 'Unknown Location';
+                    
+                    selectionDiv.innerHTML = `
+                        <div class="location">${locationText}</div>
+                        <div class="coords">Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°</div>
+                    `;
+                } else {
+                    selectionDiv.innerHTML = `
+                        <div class="location">Unknown Location</div>
+                        <div class="coords">Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°</div>
+                    `;
+                }
                 
                 controls.autoRotate = false;
                 setTimeout(() => {
                     controls.autoRotate = true;
-                }, 2000);
+                }, 3000);
             }
         }
 
