@@ -15,6 +15,12 @@
             width: 100vw; 
             height: 100vh;
             position: relative;
+            cursor: grab;
+        }
+        #globe-container:active {
+            cursor: grabbing;
+        }
+        #globe-container.clicked {
             cursor: crosshair;
         }
         #loading {
@@ -77,25 +83,24 @@
             color: #888;
             font-style: italic;
         }
-        #selection .error {
-            color: #ff6b6b;
-            font-size: 12px;
-        }
     </style>
 </head>
 <body>
     <div id="globe-container">
         <div id="loading">LOADING EARTH...</div>
-        <div id="info">Click on globe to select location</div>
+        <div id="info">Click to select • Drag to rotate</div>
         <div id="selection"></div>
     </div>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script>
-        let scene, camera, renderer, earth, clouds, atmosphere, stars, controls;
+        let scene, camera, renderer, earth, atmosphere, stars, controls;
         let raycaster, mouse;
         let selectionMarker = null;
+        let isDragging = false;
+        let mouseDownTime = 0;
+        let mouseDownPos = { x: 0, y: 0 };
 
         // Major regions for fallback
         const REGIONS = [
@@ -104,12 +109,16 @@
             { name: "Europe", minLat: 35, maxLat: 70, minLon: -25, maxLon: 45 },
             { name: "Africa", minLat: -35, maxLat: 35, minLon: -20, maxLon: 55 },
             { name: "Asia", minLat: 10, maxLat: 75, minLon: 55, maxLon: 180 },
-            { name: "Australia/Oceania", minLat: -50, maxLat: 0, minLon: 110, maxLon: 180 },
+            { name: "Australia", minLat: -45, maxLat: -10, minLon: 110, maxLon: 155 },
+            { name: "Oceania", minLat: -50, maxLat: 0, minLon: 110, maxLon: 180 },
             { name: "Antarctica", minLat: -90, maxLat: -60, minLon: -180, maxLon: 180 },
-            { name: "Pacific Ocean", minLat: -60, maxLat: 60, minLon: -180, maxLon: -100 },
-            { name: "Atlantic Ocean", minLat: -60, maxLat: 70, minLon: -80, maxLon: 20 },
+            { name: "Arctic Ocean", minLat: 70, maxLat: 90, minLon: -180, maxLon: 180 },
+            { name: "North Pacific", minLat: 0, maxLat: 60, minLon: 120, maxLon: 180 },
+            { name: "South Pacific", minLat: -60, maxLat: 0, minLon: 120, maxLon: 180 },
+            { name: "North Atlantic", minLat: 0, maxLat: 70, minLon: -80, maxLon: 20 },
+            { name: "South Atlantic", minLat: -60, maxLat: 0, minLon: -80, maxLon: 20 },
             { name: "Indian Ocean", minLat: -60, maxLat: 30, minLon: 20, maxLon: 150 },
-            { name: "Arctic Ocean", minLat: 70, maxLat: 90, minLon: -180, maxLon: 180 }
+            { name: "Southern Ocean", minLat: -60, maxLat: -45, minLon: -180, maxLon: 180 }
         ];
 
         function getRegionName(lat, lon) {
@@ -140,26 +149,32 @@
             raycaster = new THREE.Raycaster();
             mouse = new THREE.Vector2();
 
+            // Controls with graceful auto-rotation
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
+            controls.dampingFactor = 0.03; // Smoother damping
             controls.minDistance = 1.5;
             controls.maxDistance = 10;
             controls.enablePan = false;
             controls.autoRotate = true;
-            controls.autoRotateSpeed = 0.5;
+            controls.autoRotateSpeed = 0.3; // Slower rotation
 
             createStars();
             createEarth();
-            createClouds();
             createAtmosphere();
 
             setTimeout(() => {
                 document.getElementById('loading').style.opacity = '0';
             }, 1000);
 
+            // Event listeners
             window.addEventListener('resize', onWindowResize, false);
-            renderer.domElement.addEventListener('pointerdown', onGlobeClick, false);
+            
+            // Mouse events for click vs drag detection
+            const container = document.getElementById('globe-container');
+            container.addEventListener('mousedown', onMouseDown, false);
+            container.addEventListener('mousemove', onMouseMove, false);
+            container.addEventListener('mouseup', onMouseUp, false);
             
             animate();
         }
@@ -206,27 +221,6 @@
 
             earth = new THREE.Mesh(geometry, material);
             scene.add(earth);
-        }
-
-        function createClouds() {
-            const geometry = new THREE.SphereGeometry(1.01, 128, 128);
-            const textureLoader = new THREE.TextureLoader();
-            
-            const cloudTexture = textureLoader.load(
-                'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_1024.png'
-            );
-            
-            const material = new THREE.MeshBasicMaterial({
-                map: cloudTexture,
-                transparent: true,
-                opacity: 0.5,
-                blending: THREE.AdditiveBlending,
-                side: THREE.DoubleSide,
-                depthWrite: false
-            });
-
-            clouds = new THREE.Mesh(geometry, material);
-            scene.add(clouds);
         }
 
         function createAtmosphere() {
@@ -287,65 +281,42 @@
             scene.add(selectionMarker);
         }
 
-        async function getLocationInfo(lat, lon) {
-            try {
-                // Add delay to respect Nominatim usage policy
-                await new Promise(resolve => setTimeout(resolve, 100));
-                
-                const response = await fetch(
-                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=5&accept-language=en`,
-                    {
-                        headers: {
-                            'User-Agent': 'GlobalGlobe/1.0'
-                        }
-                    }
-                );
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                
-                // Extract location info with fallbacks
-                const city = data.address.city || 
-                           data.address.town || 
-                           data.address.village || 
-                           data.address.hamlet ||
-                           data.address.suburb ||
-                           '';
-                
-                const state = data.address.state || 
-                            data.address.region ||
-                            data.address.province ||
-                            '';
-                
-                const country = data.address.country || 
-                              data.address.country_name ||
-                              '';
-                
-                const ocean = data.address.ocean || '';
-                const sea = data.address.sea || '';
-                
-                return { 
-                    city, 
-                    state, 
-                    country, 
-                    ocean, 
-                    sea,
-                    display_name: data.display_name,
-                    category: data.category,
-                    type: data.type
-                };
-            } catch (error) {
-                console.error('Geocoding error:', error);
-                return null;
+        function onMouseDown(event) {
+            isDragging = false;
+            mouseDownTime = Date.now();
+            mouseDownPos = { x: event.clientX, y: event.clientY };
+            
+            // Stop auto-rotation on mouse down
+            controls.autoRotate = false;
+        }
+
+        function onMouseMove(event) {
+            // Detect if user is dragging
+            const dx = event.clientX - mouseDownPos.x;
+            const dy = event.clientY - mouseDownPos.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > 5) {
+                isDragging = true;
             }
         }
 
-        async function onGlobeClick(event) {
-            event.preventDefault();
+        async function onMouseUp(event) {
+            const clickDuration = Date.now() - mouseDownTime;
             
+            // Only process as click if it was a short duration and minimal movement
+            if (!isDragging && clickDuration < 300) {
+                // This was a click, not a drag
+                await handleGlobeClick(event);
+            }
+            
+            // Resume auto-rotation after a delay
+            setTimeout(() => {
+                controls.autoRotate = true;
+            }, 2000);
+        }
+
+        async function handleGlobeClick(event) {
             const rect = renderer.domElement.getBoundingClientRect();
             mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -357,6 +328,7 @@
                 const point = intersects[0].point;
                 const uv = intersects[0].uv;
                 
+                // More accurate coordinate calculation
                 const lat = (0.5 - uv.y) * 180;
                 const lon = (uv.x - 0.5) * 360;
                 
@@ -365,18 +337,15 @@
                 const selectionDiv = document.getElementById('selection');
                 selectionDiv.innerHTML = `
                     <div class="loading">Looking up location...</div>
-                    <div class="coords">Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°</div>
+                    <div class="coords">Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°</div>
                 `;
                 selectionDiv.classList.add('visible');
                 
                 // Get location info
                 const location = await getLocationInfo(lat, lon);
-                
-                // Get fallback region
                 const regionName = getRegionName(lat, lon);
                 
                 if (location) {
-                    // Build location string with fallbacks
                     let locationParts = [];
                     
                     if (location.city) locationParts.push(location.city);
@@ -386,7 +355,6 @@
                         locationParts.push(location.country);
                     }
                     
-                    // If no city/country, use ocean/sea/region
                     let mainLocation = locationParts.join(', ');
                     let subLocation = '';
                     
@@ -406,21 +374,48 @@
                     selectionDiv.innerHTML = `
                         <div class="location">${mainLocation || regionName}</div>
                         ${subLocation ? `<div class="region">${subLocation}</div>` : ''}
-                        <div class="coords">Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°</div>
+                        <div class="coords">Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°</div>
                     `;
                 } else {
-                    // API failed - use region fallback
                     selectionDiv.innerHTML = `
                         <div class="location">${regionName}</div>
-                        <div class="region">Region (API unavailable)</div>
-                        <div class="coords">Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°</div>
+                        <div class="region">Region</div>
+                        <div class="coords">Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°</div>
                     `;
                 }
+            }
+        }
+
+        async function getLocationInfo(lat, lon) {
+            try {
+                await new Promise(resolve => setTimeout(resolve, 100));
                 
-                controls.autoRotate = false;
-                setTimeout(() => {
-                    controls.autoRotate = true;
-                }, 3000);
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10&accept-language=en`,
+                    {
+                        headers: {
+                            'User-Agent': 'GlobalGlobe/1.0'
+                        }
+                    }
+                );
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                return { 
+                    city: data.address?.city || data.address?.town || data.address?.village || data.address?.hamlet || data.address?.suburb || '',
+                    state: data.address?.state || data.address?.region || data.address?.province || '',
+                    country: data.address?.country || data.address?.country_name || '',
+                    ocean: data.address?.ocean || '',
+                    sea: data.address?.sea || '',
+                    display_name: data.display_name
+                };
+            } catch (error) {
+                console.error('Geocoding error:', error);
+                return null;
             }
         }
 
@@ -433,9 +428,8 @@
         function animate() {
             requestAnimationFrame(animate);
             
-            if (earth) earth.rotation.y += 0.0005;
-            if (clouds) clouds.rotation.y += 0.0007;
-            if (stars) stars.rotation.y += 0.0001;
+            if (earth) earth.rotation.y += 0.0003; // Slower rotation
+            if (stars) stars.rotation.y += 0.00005;
             
             if (selectionMarker) {
                 selectionMarker.children[1].lookAt(camera.position);
