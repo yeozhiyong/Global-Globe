@@ -50,6 +50,7 @@
             padding: 10px 15px;
             border-radius: 5px;
             border: 1px solid #4fc3f7;
+            pointer-events: none;
         }
         #selection.visible {
             opacity: 1;
@@ -76,17 +77,15 @@
             // Scene setup
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x020204);
-            scene.fog = new THREE.FogExp2(0x020204, 0.02);
 
             // Camera
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 0, 4);
+            camera.position.set(0, 0, 3.5);
 
             // Renderer
             renderer = new THREE.WebGLRenderer({ 
                 antialias: true, 
-                alpha: true,
-                powerPreference: "high-performance"
+                alpha: true
             });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -100,7 +99,7 @@
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.05;
-            controls.minDistance = 2;
+            controls.minDistance = 1.5;
             controls.maxDistance = 10;
             controls.enablePan = false;
             controls.autoRotate = true;
@@ -118,162 +117,91 @@
 
             // Event listeners
             window.addEventListener('resize', onWindowResize, false);
-            renderer.domElement.addEventListener('click', onGlobeClick, false);
+            renderer.domElement.addEventListener('pointerdown', onGlobeClick, false);
             
             animate();
         }
 
         function createStarField() {
-            const starGroups = [];
-            
-            for (let layer = 0; layer < 3; layer++) {
-                const starsGeometry = new THREE.BufferGeometry();
-                const starsCount = 2000;
-                const posArray = new Float32Array(starsCount * 3);
-                const sizesArray = new Float32Array(starsCount);
-                const opacityArray = new Float32Array(starsCount);
+            const starsGeometry = new THREE.BufferGeometry();
+            const starsCount = 3000;
+            const posArray = new Float32Array(starsCount * 3);
 
-                for(let i = 0; i < starsCount; i++) {
-                    const i3 = i * 3;
-                    const radius = 50 + layer * 30;
-                    const theta = Math.random() * Math.PI * 2;
-                    const phi = Math.acos(2 * Math.random() - 1);
-                    
-                    posArray[i3] = radius * Math.sin(phi) * Math.cos(theta);
-                    posArray[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
-                    posArray[i3 + 2] = radius * Math.cos(phi);
-                    
-                    sizesArray[i] = Math.random() * (0.5 + layer * 0.3) + 0.1;
-                    opacityArray[i] = Math.random() * 0.5 + 0.3;
-                }
-
-                starsGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-                starsGeometry.setAttribute('size', new THREE.BufferAttribute(sizesArray, 1));
-                starsGeometry.setAttribute('opacity', new THREE.BufferAttribute(opacityArray, 1));
-
-                const starsMaterial = new THREE.ShaderMaterial({
-                    uniforms: {
-                        time: { value: 0 },
-                        color: { value: new THREE.Color(0xffffff) }
-                    },
-                    vertexShader: `
-                        attribute float size;
-                        attribute float opacity;
-                        varying float vOpacity;
-                        void main() {
-                            vOpacity = opacity;
-                            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                            gl_PointSize = size * (300.0 / -mvPosition.z);
-                            gl_Position = projectionMatrix * mvPosition;
-                        }
-                    `,
-                    fragmentShader: `
-                        uniform vec3 color;
-                        uniform float time;
-                        varying float vOpacity;
-                        void main() {
-                            float dist = length(gl_PointCoord - vec2(0.5));
-                            if (dist > 0.5) discard;
-                            float alpha = smoothstep(0.5, 0.0, dist) * vOpacity;
-                            alpha *= 0.7 + 0.3 * sin(time * 2.0 + gl_FragCoord.x * 0.1);
-                            gl_FragColor = vec4(color, alpha);
-                        }
-                    `,
-                    transparent: true,
-                    blending: THREE.AdditiveBlending,
-                    depthWrite: false
-                });
-
-                const starLayer = new THREE.Points(starsGeometry, starsMaterial);
-                starLayer.userData = { isStarLayer: true, layer: layer };
-                scene.add(starLayer);
-                starGroups.push(starLayer);
+            for(let i = 0; i < starsCount * 3; i += 3) {
+                const radius = 50 + Math.random() * 50;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                
+                posArray[i] = radius * Math.sin(phi) * Math.cos(theta);
+                posArray[i + 1] = radius * Math.sin(phi) * Math.sin(theta);
+                posArray[i + 2] = radius * Math.cos(phi);
             }
-            
-            starField = starGroups;
+
+            starsGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+
+            const starsMaterial = new THREE.PointsMaterial({
+                size: 0.015,
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.8
+            });
+
+            stars = new THREE.Points(starsGeometry, starsMaterial);
+            scene.add(stars);
         }
 
         function createEarth() {
-            const geometry = new THREE.SphereGeometry(1, 256, 256);
+            const geometry = new THREE.SphereGeometry(1, 128, 128);
             const textureLoader = new THREE.TextureLoader();
             
-            // Load textures
+            // Load textures with callbacks to ensure they're loaded
             const earthTexture = textureLoader.load(
                 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_atmos_2048.jpg'
-            );
-            
-            const nightTexture = textureLoader.load(
-                'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_lights_2048.png'
             );
             
             const bumpMap = textureLoader.load(
                 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_normal_2048.jpg'
             );
+            
+            const specularMap = textureLoader.load(
+                'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_specular_2048.jpg'
+            );
 
-            // Simple material without external lighting
-            const material = new THREE.ShaderMaterial({
-                uniforms: {
-                    dayTexture: { value: earthTexture },
-                    nightTexture: { value: nightTexture },
-                    bumpMap: { value: bumpMap },
-                    sunDirection: { value: new THREE.Vector3(1, 0.3, 1) }
-                },
-                vertexShader: `
-                    varying vec2 vUv;
-                    varying vec3 vNormal;
-                    
-                    void main() {
-                        vUv = uv;
-                        vNormal = normalize(normalMatrix * normal);
-                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                    }
-                `,
-                fragmentShader: `
-                    uniform sampler2D dayTexture;
-                    uniform sampler2D nightTexture;
-                    uniform sampler2D bumpMap;
-                    uniform vec3 sunDirection;
-                    
-                    varying vec2 vUv;
-                    varying vec3 vNormal;
-                    
-                    void main() {
-                        vec3 dayColor = texture2D(dayTexture, vUv).rgb;
-                        vec3 nightColor = texture2D(nightTexture, vUv).rgb;
-                        
-                        // Fixed lighting direction
-                        vec3 lightDir = normalize(sunDirection);
-                        float cosAngle = max(dot(vNormal, lightDir), 0.0);
-                        
-                        // Day/night mix
-                        float mixFactor = smoothstep(-0.1, 0.3, cosAngle);
-                        vec3 color = mix(nightColor * 2.0, dayColor, mixFactor);
-                        
-                        // Add subtle grain
-                        float noise = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453);
-                        color *= 0.98 + noise * 0.04;
-                        
-                        gl_FragColor = vec4(color, 1.0);
-                    }
-                `
+            // Use MeshPhongMaterial with built-in lighting
+            const material = new THREE.MeshPhongMaterial({
+                map: earthTexture,
+                normalMap: bumpMap,
+                normalScale: new THREE.Vector2(0.05, 0.05),
+                specularMap: specularMap,
+                specular: new THREE.Color(0x333333),
+                shininess: 15
             });
 
             earth = new THREE.Mesh(geometry, material);
             scene.add(earth);
+            
+            // Add ambient light for base visibility
+            const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+            scene.add(ambientLight);
+            
+            // Add directional light (fixed position, no sun movement)
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            dirLight.position.set(5, 3, 5);
+            scene.add(dirLight);
         }
 
         function createClouds() {
-            const geometry = new THREE.SphereGeometry(1.015, 128, 128);
+            const geometry = new THREE.SphereGeometry(1.01, 128, 128);
             const textureLoader = new THREE.TextureLoader();
             
             const cloudTexture = textureLoader.load(
                 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_1024.png'
             );
             
-            const material = new THREE.MeshBasicMaterial({
+            const material = new THREE.MeshPhongMaterial({
                 map: cloudTexture,
                 transparent: true,
-                opacity: 0.4,
+                opacity: 0.6,
                 blending: THREE.AdditiveBlending,
                 side: THREE.DoubleSide,
                 depthWrite: false
@@ -284,7 +212,7 @@
         }
 
         function createAtmosphere() {
-            const geometry = new THREE.SphereGeometry(1.08, 64, 64);
+            const geometry = new THREE.SphereGeometry(1.15, 64, 64);
             
             const material = new THREE.ShaderMaterial({
                 vertexShader: `
@@ -297,8 +225,8 @@
                 fragmentShader: `
                     varying vec3 vNormal;
                     void main() {
-                        float intensity = pow(0.7 - dot(vNormal, vec3(0, 0, 1.0)), 3.0);
-                        gl_FragColor = vec4(0.3, 0.6, 1.0, 1.0) * intensity * 0.6;
+                        float intensity = pow(0.6 - dot(vNormal, vec3(0, 0, 1.0)), 4.0);
+                        gl_FragColor = vec4(0.3, 0.6, 1.0, 1.0) * intensity;
                     }
                 `,
                 blending: THREE.AdditiveBlending,
@@ -310,74 +238,87 @@
             scene.add(atmosphere);
         }
 
-        function createSelectionMarker() {
-            const geometry = new THREE.SphereGeometry(0.03, 16, 16);
-            const material = new THREE.MeshBasicMaterial({
-                color: 0x4fc3f7,
+        function createSelectionMarker(position) {
+            // Remove existing marker
+            if (selectionMarker) {
+                scene.remove(selectionMarker);
+            }
+            
+            // Create marker group
+            selectionMarker = new THREE.Group();
+            
+            // Inner dot
+            const dotGeometry = new THREE.SphereGeometry(0.02, 16, 16);
+            const dotMaterial = new THREE.MeshBasicMaterial({
+                color: 0x00ff00,
                 transparent: true,
-                opacity: 0.8
+                opacity: 0.9
             });
+            const dot = new THREE.Mesh(dotGeometry, dotMaterial);
+            selectionMarker.add(dot);
             
-            selectionMarker = new THREE.Mesh(geometry, material);
-            
-            // Add glow ring
-            const ringGeometry = new THREE.RingGeometry(0.04, 0.05, 32);
+            // Outer ring
+            const ringGeometry = new THREE.RingGeometry(0.03, 0.04, 32);
             const ringMaterial = new THREE.MeshBasicMaterial({
-                color: 0x4fc3f7,
+                color: 0x00ff00,
                 transparent: true,
-                opacity: 0.5,
+                opacity: 0.6,
                 side: THREE.DoubleSide
             });
             const ring = new THREE.Mesh(ringGeometry, ringMaterial);
             ring.lookAt(camera.position);
             selectionMarker.add(ring);
             
+            // Position on globe surface
+            selectionMarker.position.copy(position);
+            
             scene.add(selectionMarker);
         }
 
         function onGlobeClick(event) {
-            // Calculate mouse position in normalized device coordinates
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            // Prevent default
+            event.preventDefault();
+            
+            // Calculate mouse position
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-            // Update the picking ray with the camera and mouse position
+            // Update raycaster
             raycaster.setFromCamera(mouse, camera);
 
-            // Calculate objects intersecting the picking ray
+            // Check intersection with earth
             const intersects = raycaster.intersectObject(earth);
 
             if (intersects.length > 0) {
                 const point = intersects[0].point;
                 const uv = intersects[0].uv;
                 
-                // Convert to lat/lon
-                const lat = 90 - (uv.y * 180);
-                const lon = (uv.x * 360) - 180;
+                // Convert UV to lat/lon
+                const lat = (0.5 - uv.y) * 180;
+                const lon = (uv.x - 0.5) * 360;
                 
-                // Update selection
-                selectedPoint = point;
-                
-                // Create or update marker
-                if (!selectionMarker) {
-                    createSelectionMarker();
-                }
-                selectionMarker.position.copy(point);
-                selectionMarker.visible = true;
+                // Create marker at intersection point
+                createSelectionMarker(point);
                 
                 // Update UI
                 const selectionDiv = document.getElementById('selection');
                 selectionDiv.innerHTML = `
-                    <strong>Selected Location</strong><br>
+                    <strong>Selected</strong><br>
                     Lat: ${lat.toFixed(2)}°<br>
                     Lon: ${lon.toFixed(2)}°
                 `;
                 selectionDiv.classList.add('visible');
                 
-                // Pause auto-rotation briefly
+                // Pause rotation briefly
                 controls.autoRotate = false;
                 setTimeout(() => {
                     controls.autoRotate = true;
-                }, 3000);
+                }, 2000);
+                
+                console.log('Clicked at:', lat, lon);
+            } else {
+                console.log('No intersection');
             }
         }
 
@@ -402,21 +343,14 @@
                 clouds.rotation.y += 0.0007;
             }
             
-            // Atmosphere rotation
-            if (atmosphere) {
-                atmosphere.rotation.y += 0.0003;
+            // Star twinkle
+            if (stars) {
+                stars.rotation.y += 0.0001;
             }
             
-            // Star twinkling
-            if (starField) {
-                starField.forEach((layer, index) => {
-                    layer.material.uniforms.time.value = time + index;
-                });
-            }
-            
-            // Update selection marker to face camera
-            if (selectionMarker && selectionMarker.visible) {
-                selectionMarker.children[0].lookAt(camera.position);
+            // Update marker to face camera
+            if (selectionMarker) {
+                selectionMarker.children[1].lookAt(camera.position);
             }
             
             controls.update();
