@@ -51,7 +51,8 @@
             border-radius: 8px;
             border: 1px solid #4fc3f7;
             pointer-events: none;
-            min-width: 200px;
+            min-width: 220px;
+            max-width: 300px;
         }
         #selection.visible {
             opacity: 1;
@@ -61,14 +62,24 @@
             font-size: 16px;
             font-weight: bold;
             margin-bottom: 5px;
+            line-height: 1.3;
+        }
+        #selection .region {
+            color: #aaa;
+            font-size: 12px;
+            margin-bottom: 3px;
         }
         #selection .coords {
-            color: #aaa;
+            color: #888;
             font-size: 11px;
         }
         #selection .loading {
             color: #888;
             font-style: italic;
+        }
+        #selection .error {
+            color: #ff6b6b;
+            font-size: 12px;
         }
     </style>
 </head>
@@ -85,6 +96,31 @@
         let scene, camera, renderer, earth, clouds, atmosphere, stars, controls;
         let raycaster, mouse;
         let selectionMarker = null;
+
+        // Major regions for fallback
+        const REGIONS = [
+            { name: "North America", minLat: 15, maxLat: 75, minLon: -170, maxLon: -50 },
+            { name: "South America", minLat: -55, maxLat: 15, minLon: -85, maxLon: -35 },
+            { name: "Europe", minLat: 35, maxLat: 70, minLon: -25, maxLon: 45 },
+            { name: "Africa", minLat: -35, maxLat: 35, minLon: -20, maxLon: 55 },
+            { name: "Asia", minLat: 10, maxLat: 75, minLon: 55, maxLon: 180 },
+            { name: "Australia/Oceania", minLat: -50, maxLat: 0, minLon: 110, maxLon: 180 },
+            { name: "Antarctica", minLat: -90, maxLat: -60, minLon: -180, maxLon: 180 },
+            { name: "Pacific Ocean", minLat: -60, maxLat: 60, minLon: -180, maxLon: -100 },
+            { name: "Atlantic Ocean", minLat: -60, maxLat: 70, minLon: -80, maxLon: 20 },
+            { name: "Indian Ocean", minLat: -60, maxLat: 30, minLon: 20, maxLon: 150 },
+            { name: "Arctic Ocean", minLat: 70, maxLat: 90, minLon: -180, maxLon: 180 }
+        ];
+
+        function getRegionName(lat, lon) {
+            for (const region of REGIONS) {
+                if (lat >= region.minLat && lat <= region.maxLat &&
+                    lon >= region.minLon && lon <= region.maxLon) {
+                    return region.name;
+                }
+            }
+            return "Open Ocean";
+        }
 
         function init() {
             scene = new THREE.Scene();
@@ -253,17 +289,54 @@
 
         async function getLocationInfo(lat, lon) {
             try {
-                // Using OpenStreetMap Nominatim API (free, no key required)
+                // Add delay to respect Nominatim usage policy
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
                 const response = await fetch(
-                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10&accept-language=en`
+                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=5&accept-language=en`,
+                    {
+                        headers: {
+                            'User-Agent': 'GlobalGlobe/1.0'
+                        }
+                    }
                 );
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
                 
-                const city = data.address.city || data.address.town || data.address.village || '';
-                const country = data.address.country || '';
-                const state = data.address.state || '';
+                // Extract location info with fallbacks
+                const city = data.address.city || 
+                           data.address.town || 
+                           data.address.village || 
+                           data.address.hamlet ||
+                           data.address.suburb ||
+                           '';
                 
-                return { city, state, country, display_name: data.display_name };
+                const state = data.address.state || 
+                            data.address.region ||
+                            data.address.province ||
+                            '';
+                
+                const country = data.address.country || 
+                              data.address.country_name ||
+                              '';
+                
+                const ocean = data.address.ocean || '';
+                const sea = data.address.sea || '';
+                
+                return { 
+                    city, 
+                    state, 
+                    country, 
+                    ocean, 
+                    sea,
+                    display_name: data.display_name,
+                    category: data.category,
+                    type: data.type
+                };
             } catch (error) {
                 console.error('Geocoding error:', error);
                 return null;
@@ -299,18 +372,47 @@
                 // Get location info
                 const location = await getLocationInfo(lat, lon);
                 
-                if (location && (location.city || location.country)) {
-                    const locationText = location.city && location.country 
-                        ? `${location.city}, ${location.country}`
-                        : location.country || location.state || 'Unknown Location';
+                // Get fallback region
+                const regionName = getRegionName(lat, lon);
+                
+                if (location) {
+                    // Build location string with fallbacks
+                    let locationParts = [];
+                    
+                    if (location.city) locationParts.push(location.city);
+                    else if (location.state) locationParts.push(location.state);
+                    
+                    if (location.country && !locationParts.includes(location.country)) {
+                        locationParts.push(location.country);
+                    }
+                    
+                    // If no city/country, use ocean/sea/region
+                    let mainLocation = locationParts.join(', ');
+                    let subLocation = '';
+                    
+                    if (!mainLocation) {
+                        if (location.ocean) {
+                            mainLocation = location.ocean;
+                            subLocation = 'Ocean';
+                        } else if (location.sea) {
+                            mainLocation = location.sea;
+                            subLocation = 'Sea';
+                        } else {
+                            mainLocation = regionName;
+                            subLocation = 'Region';
+                        }
+                    }
                     
                     selectionDiv.innerHTML = `
-                        <div class="location">${locationText}</div>
+                        <div class="location">${mainLocation || regionName}</div>
+                        ${subLocation ? `<div class="region">${subLocation}</div>` : ''}
                         <div class="coords">Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°</div>
                     `;
                 } else {
+                    // API failed - use region fallback
                     selectionDiv.innerHTML = `
-                        <div class="location">Unknown Location</div>
+                        <div class="location">${regionName}</div>
+                        <div class="region">Region (API unavailable)</div>
                         <div class="coords">Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°</div>
                     `;
                 }
